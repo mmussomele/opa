@@ -507,6 +507,58 @@ func (num Number) String() string {
 	return string(num)
 }
 
+type Datetime time.Time
+
+// NumberTerm creates a new Term with a Datetime value.
+func DatetimeTerm(t time.Time) *Term {
+	return &Term{Value: Datetime(t)}
+}
+
+// Equal returns true if the other Value is a Datetime and is equal.
+func (d Datetime) Equal(other Value) bool {
+	switch other := other.(type) {
+	case Datetime:
+		return d == other
+	default:
+		return false
+	}
+}
+
+func (d Datetime) Compare(other Datetime) int {
+	u1 := time.Time(d).Unix()
+	u2 := time.Time(other).Unix()
+	return int(u1 - u2)
+}
+
+// Find returns the current value or a not found error.
+func (d Datetime) Find(path Ref) (Value, error) {
+	if len(path) == 0 {
+		return d, nil
+	}
+	return nil, fmt.Errorf("find: not found")
+}
+
+// IsGround always returns true.
+func (d Datetime) IsGround() bool {
+	return true
+}
+
+func (d Datetime) String() string {
+	return time.Time(d).String()
+}
+
+// Hash returns the hash code for the Value.
+func (d Datetime) Hash() int {
+	s := d.String()
+	return hashString(&s)
+}
+
+// Int64 returns the int64 representation of d if possible, which is the number of seconds
+// since January 1, 1970 UTC. Int64 always succeeds.
+func (d Datetime) Int64() (int64, bool) {
+	return time.Time(d).Unix(), true
+}
+
 // String represents a string value as defined by JSON.
 type String string
 

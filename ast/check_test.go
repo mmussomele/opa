@@ -194,11 +194,11 @@ func TestCheckInference(t *testing.T) {
 			Var("k"): types.NewAny(types.S, types.N),
 		}},
 		{"simple-built-in", "x = 1 + 2", map[Var]types.Type{
-			Var("x"): types.N,
+			Var("x"): types.NewAny(types.N, types.D),
 		}},
 		{"simple-built-in-exists", "x = 1 + 2; y = x + 2", map[Var]types.Type{
-			Var("x"): types.N,
-			Var("y"): types.N,
+			Var("x"): types.NewAny(types.N, types.D),
+			Var("y"): types.NewAny(types.N, types.D),
 		}},
 		{"array-builtin", `fake_builtin_1([x,"foo"])`, map[Var]types.Type{
 			Var("x"): types.S,

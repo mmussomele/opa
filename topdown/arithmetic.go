@@ -84,8 +84,34 @@ func builtinArithArity2(fn arithArity2) FunctionalBuiltin2 {
 	}
 }
 
-func builtinMinus(a, b ast.Value) (ast.Value, error) {
+func builtinPlus(a, b ast.Value) (ast.Value, error) {
+	n1, ok1 := a.(ast.Number)
+	n2, ok2 := b.(ast.Number)
 
+	if ok1 && ok2 {
+		f, err := arithPlus(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
+		if err != nil {
+			return nil, err
+		}
+		return builtins.FloatToNumber(f), nil
+	}
+
+	if d, ok3 := a.(ast.Datetime); ok3 && ok2 {
+		f, err := arithPlus(builtins.DatetimeToFloat(d), builtins.NumberToFloat(n2))
+		if err != nil {
+			return nil, err
+		}
+		return builtins.FloatToDatetime(f), nil
+	}
+
+	if ok2 && !ok1 {
+		return nil, builtins.NewOperandTypeErr(1, a, ast.NumberTypeName, ast.DatetimeTypeName)
+	}
+
+	return nil, builtins.NewOperandTypeErr(2, b, ast.NumberTypeName)
+}
+
+func builtinMinus(a, b ast.Value) (ast.Value, error) {
 	n1, ok1 := a.(ast.Number)
 	n2, ok2 := b.(ast.Number)
 
@@ -95,6 +121,14 @@ func builtinMinus(a, b ast.Value) (ast.Value, error) {
 			return nil, err
 		}
 		return builtins.FloatToNumber(f), nil
+	}
+
+	if d, ok3 := a.(ast.Datetime); ok3 && ok2 {
+		f, err := arithMinus(builtins.DatetimeToFloat(d), builtins.NumberToFloat(n2))
+		if err != nil {
+			return nil, err
+		}
+		return builtins.FloatToDatetime(f), nil
 	}
 
 	s1, ok3 := a.(*ast.Set)
@@ -108,13 +142,14 @@ func builtinMinus(a, b ast.Value) (ast.Value, error) {
 		return nil, builtins.NewOperandTypeErr(1, a, ast.NumberTypeName, ast.SetTypeName)
 	}
 
+	// TODO: Should the second argument be `b`?
 	return nil, builtins.NewOperandTypeErr(2, a, ast.NumberTypeName, ast.SetTypeName)
 }
 
 func init() {
 	RegisterFunctionalBuiltin1(ast.Abs.Name, builtinArithArity1(arithAbs))
 	RegisterFunctionalBuiltin1(ast.Round.Name, builtinArithArity1(arithRound))
-	RegisterFunctionalBuiltin2(ast.Plus.Name, builtinArithArity2(arithPlus))
+	RegisterFunctionalBuiltin2(ast.Plus.Name, builtinPlus)
 	RegisterFunctionalBuiltin2(ast.Minus.Name, builtinMinus)
 	RegisterFunctionalBuiltin2(ast.Multiply.Name, builtinArithArity2(arithMultiply))
 	RegisterFunctionalBuiltin2(ast.Divide.Name, builtinArithArity2(arithDivide))

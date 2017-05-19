@@ -43,6 +43,16 @@ type (
 	// framework takes care of this.
 	FunctionalBuiltin3 func(op1, op2, op3 ast.Value) (output ast.Value, err error)
 
+	// FunctionalBuiltin6 defines an interface for complex functional built-ins.
+	//
+	// Implement this interface if your built-in function takes six inputs and
+	// produces one output.
+	//
+	// If an error occurs, the functional built-in should return a descriptive
+	// message. The message should not be prefixed with the built-in name as the
+	// framework takes care of this.
+	FunctionalBuiltin6 func(op1, op2, op3, op4, op5, op6 ast.Value) (output ast.Value, err error)
+
 	// FunctionalBuiltinVoid2 defines an interface for simple functional built-ins.
 	//
 	// Implement this interface if your built-in function takes two inputs and
@@ -97,6 +107,12 @@ func RegisterFunctionalBuiltin2(name ast.Var, fun FunctionalBuiltin2) {
 // engine.
 func RegisterFunctionalBuiltin3(name ast.Var, fun FunctionalBuiltin3) {
 	builtinFunctions[name] = functionalWrapper3(name, fun)
+}
+
+// RegisterFunctionalBuiltin6 adds a new built-in function to the evaluation
+// engine.
+func RegisterFunctionalBuiltin6(name ast.Var, fun FunctionalBuiltin6) {
+	builtinFunctions[name] = functionalWrapper6(name, fun)
 }
 
 // BuiltinEmpty is used to signal that the built-in function evaluated, but the
@@ -166,6 +182,22 @@ func functionalWrapper3(name ast.Var, fn FunctionalBuiltin3) BuiltinFunc {
 			return handleFunctionalBuiltinErr(name, expr.Location, err)
 		}
 		return unifyAndContinue(t, iter, result, operands[3].Value)
+	}
+}
+
+func functionalWrapper6(name ast.Var, fn FunctionalBuiltin6) BuiltinFunc {
+	return func(t *Topdown, expr *ast.Expr, iter Iterator) error {
+		operands := expr.Terms.([]*ast.Term)[1:]
+		resolved, err := resolveN(t, name, operands, 6)
+		if err != nil {
+			return err
+		}
+		result, err := fn(resolved[0], resolved[1], resolved[2], resolved[3],
+			resolved[4], resolved[5])
+		if err != nil {
+			return handleFunctionalBuiltinErr(name, expr.Location, err)
+		}
+		return unifyAndContinue(t, iter, result, operands[6].Value)
 	}
 }
 

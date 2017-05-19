@@ -505,6 +505,10 @@ func unifies(a, b types.Type) bool {
 	case types.Number:
 		_, ok := b.(types.Number)
 		return ok
+	case types.Datetime:
+		_, ok := b.(types.Datetime)
+		// TODO: allow for types.Number?
+		return ok
 	case types.String:
 		_, ok := b.(types.String)
 		return ok

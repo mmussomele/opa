@@ -52,6 +52,9 @@ var DefaultBuiltins = [...]*Builtin{
 
 	// JSON
 	JSONMarshal, JSONUnmarshal,
+
+	// Datetime
+	DatetimeToInt, DatetimeFromInt, NewDate, NewTime, NewDatetime,
 }
 
 // BuiltinMap provides a convenient mapping of built-in names to
@@ -131,27 +134,27 @@ var NotEqual = &Builtin{
  * Arithmetic
  */
 
-// Plus adds two numbers together.
+// Plus adds two numbers or a number and a datetime together.
 var Plus = &Builtin{
 	Name:  Var("plus"),
 	Infix: Var("+"),
 	Args: []types.Type{
-		types.N,
-		types.N,
-		types.N,
+		types.NewAny(types.N, types.D),
+		types.NewAny(types.N, types.D),
+		types.NewAny(types.N, types.D),
 	},
 	TargetPos: []int{2},
 }
 
-// Minus subtracts the second number from the first number or computes the diff
-// between two sets.
+// Minus subtracts the second number from the first number, computes the diff
+// between two sets, or subtracts a number from a datetime.
 var Minus = &Builtin{
 	Name:  Var("minus"),
 	Infix: Var("-"),
 	Args: []types.Type{
+		types.NewAny(types.N, types.NewSet(types.A), types.D),
 		types.NewAny(types.N, types.NewSet(types.A)),
-		types.NewAny(types.N, types.NewSet(types.A)),
-		types.NewAny(types.N, types.NewSet(types.A)),
+		types.NewAny(types.N, types.NewSet(types.A), types.D),
 	},
 	TargetPos: []int{2},
 }
@@ -432,6 +435,69 @@ var JSONUnmarshal = &Builtin{
 		types.A,
 	},
 	TargetPos: []int{1},
+}
+
+/**
+ * Datetime
+ */
+
+// DatetimeToInt converts a datetime to an integer.
+var DatetimeToInt = &Builtin{
+	Name: Var("datetime_to_int"),
+	Args: []types.Type{
+		types.D,
+		types.N,
+	},
+	TargetPos: []int{1},
+}
+
+// DatetimeFromInt converts an integer to a datetime.
+var DatetimeFromInt = &Builtin{
+	Name: Var("datetime_from_int"),
+	Args: []types.Type{
+		types.N,
+		types.D,
+	},
+	TargetPos: []int{1},
+}
+
+// Date creates a datetime representing the start of a day.
+var NewDate = &Builtin{
+	Name: Var("new_date"),
+	Args: []types.Type{
+		types.N,
+		types.N,
+		types.N,
+		types.D,
+	},
+	TargetPos: []int{3},
+}
+
+// Date creates a datetime representing the given time.
+var NewTime = &Builtin{
+	Name: Var("new_time"),
+	Args: []types.Type{
+		types.N,
+		types.N,
+		types.N,
+		types.D,
+	},
+	TargetPos: []int{3},
+}
+
+// Datetime creates a datetime representing a given date and time.
+var NewDatetime = &Builtin{
+	Name: Var("new_datetime"),
+	Args: []types.Type{
+		types.N,
+		types.N,
+		types.N,
+		types.N,
+		types.N,
+		types.N,
+		types.D,
+	},
+	TargetPos: []int{6},
 }
 
 /**

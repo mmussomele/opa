@@ -85,6 +85,21 @@ func (Number) String() string {
 	return "number"
 }
 
+// Datetime represents the datetime type.
+type Datetime struct{}
+
+// D represents an instance of the datetime type.
+var D = NewDatetime()
+
+// NewDatetime returns a new Datetime type.
+func NewDatetime() Datetime {
+	return Datetime{}
+}
+
+func (Datetime) String() string {
+	return "datetime"
+}
+
 // Array represents the array type.
 type Array struct {
 	static  []Type // static items
@@ -308,7 +323,7 @@ func Compare(a, b Type) int {
 	switch a.(type) {
 	case nil:
 		return 0
-	case Null, Boolean, Number, String:
+	case Null, Boolean, Number, String, Datetime:
 		return 0
 	case *Array:
 		arrA := a.(*Array)
@@ -586,14 +601,16 @@ func typeOrder(x Type) int {
 		return 2
 	case String:
 		return 3
-	case *Array:
+	case Datetime:
 		return 4
-	case *Object:
+	case *Array:
 		return 5
-	case *Set:
+	case *Object:
 		return 6
-	case Any:
+	case *Set:
 		return 7
+	case Any:
+		return 8
 	case nil:
 		return -1
 	}

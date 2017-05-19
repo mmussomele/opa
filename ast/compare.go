@@ -85,6 +85,8 @@ func Compare(a, b interface{}) int {
 		return 1
 	case Number:
 		return util.Compare(json.Number(a), json.Number(b.(Number)))
+	case Datetime:
+		return a.Compare(b.(Datetime))
 	case String:
 		b := b.(String)
 		if a.Equal(b) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/open-policy-agent/opa/ast"
 )
@@ -119,4 +120,14 @@ func NumberToFloat(n ast.Number) *big.Float {
 // FloatToNumber converts f to a number.
 func FloatToNumber(f *big.Float) ast.Number {
 	return ast.Number(f.String())
+}
+
+func DatetimeToFloat(d ast.Datetime) *big.Float {
+	i, _ := d.Int64()
+	return new(big.Float).SetInt64(i)
+}
+
+func FloatToDatetime(f *big.Float) ast.Datetime {
+	i, _ := f.Int64()
+	return ast.Datetime(time.Unix(i, 0))
 }

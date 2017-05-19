@@ -20,6 +20,7 @@ const (
 	BooleanTypeName            = "boolean"
 	StringTypeName             = "string"
 	NumberTypeName             = "number"
+	DatetimeTypeName           = "datetime"
 	VarTypeName                = "var"
 	RefTypeName                = "ref"
 	ArrayTypeName              = "array"
