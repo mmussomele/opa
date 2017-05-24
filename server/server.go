@@ -26,7 +26,6 @@ import (
 	"github.com/open-policy-agent/opa/server/authorizer"
 	"github.com/open-policy-agent/opa/server/identifier"
 	"github.com/open-policy-agent/opa/server/types"
-	"github.com/open-policy-agent/opa/server/writer"
 	"github.com/open-policy-agent/opa/storage"
 	"github.com/open-policy-agent/opa/topdown"
 	"github.com/open-policy-agent/opa/topdown/explain"
@@ -69,6 +68,36 @@ type Server struct {
 	store          *storage.Storage
 }
 
+// request represents a request that can be made to the server.
+type request struct {
+	ctx            context.Context
+	values         url.Values
+	path           string
+	input          io.ReadCloser
+	noneMatch      string
+	getSource      bool
+	pretty         bool
+	explainMode    types.ExplainModeV1
+	includeMetrics bool
+}
+
+const (
+	CodeOK = iota
+	CodeNotFound
+	CodeBadRequest
+	CodeNoContent
+	CodeNotModified
+)
+
+// response represents the result of executing a request on the server.
+type response struct {
+	data   interface{}
+	code   int
+	msg    string
+	err    error
+	pretty bool
+}
+
 // New returns a new Server.
 func New() *Server {
 
@@ -76,21 +105,21 @@ func New() *Server {
 
 	// Initialize HTTP handlers.
 	router := mux.NewRouter()
-	s.registerHandler(router, 0, "/data/{path:.+}", "POST", s.v0DataPost)
-	s.registerHandler(router, 0, "/data", "POST", s.v0DataPost)
-	s.registerHandler(router, 1, "/data/{path:.+}", "PUT", s.v1DataPut)
-	s.registerHandler(router, 1, "/data", "PUT", s.v1DataPut)
-	s.registerHandler(router, 1, "/data/{path:.+}", "GET", s.v1DataGet)
-	s.registerHandler(router, 1, "/data", "GET", s.v1DataGet)
-	s.registerHandler(router, 1, "/data/{path:.+}", "PATCH", s.v1DataPatch)
-	s.registerHandler(router, 1, "/data", "PATCH", s.v1DataPatch)
-	s.registerHandler(router, 1, "/data/{path:.+}", "POST", s.v1DataPost)
-	s.registerHandler(router, 1, "/data", "POST", s.v1DataPost)
-	s.registerHandler(router, 1, "/policies", "GET", s.v1PoliciesList)
-	s.registerHandler(router, 1, "/policies/{path:.+}", "DELETE", s.v1PoliciesDelete)
-	s.registerHandler(router, 1, "/policies/{path:.+}", "GET", s.v1PoliciesGet)
-	s.registerHandler(router, 1, "/policies/{path:.+}", "PUT", s.v1PoliciesPut)
-	s.registerHandler(router, 1, "/query", "GET", s.v1QueryGet)
+	s.registerHandler(router, 0, "/data/{path:.+}", "POST", httpV0DataPost(&s))
+	s.registerHandler(router, 0, "/data", "POST", httpV0DataPost(&s))
+	s.registerHandler(router, 1, "/data/{path:.+}", "PUT", httpV1DataPut(&s))
+	s.registerHandler(router, 1, "/data", "PUT", httpV1DataPut(&s))
+	s.registerHandler(router, 1, "/data/{path:.+}", "GET", httpV1DataGet(&s))
+	s.registerHandler(router, 1, "/data", "GET", httpV1DataGet(&s))
+	s.registerHandler(router, 1, "/data/{path:.+}", "PATCH", httpV1DataPatch(&s))
+	s.registerHandler(router, 1, "/data", "PATCH", httpV1DataPatch(&s))
+	s.registerHandler(router, 1, "/data/{path:.+}", "POST", httpV1DataPost(&s))
+	s.registerHandler(router, 1, "/data", "POST", httpV1DataPost(&s))
+	s.registerHandler(router, 1, "/policies", "GET", httpV1PoliciesList(&s))
+	s.registerHandler(router, 1, "/policies/{path:.+}", "DELETE", httpV1PoliciesDelete(&s))
+	s.registerHandler(router, 1, "/policies/{path:.+}", "GET", httpV1PoliciesGet(&s))
+	s.registerHandler(router, 1, "/policies/{path:.+}", "PUT", httpV1PoliciesPut(&s))
+	s.registerHandler(router, 1, "/query", "GET", httpV1QueryGet(&s))
 	router.HandleFunc("/", s.indexGet).Methods("GET")
 	s.Handler = router
 
@@ -270,12 +299,11 @@ func (s *Server) indexGet(w http.ResponseWriter, r *http.Request) {
 	renderVersion(w)
 	defer renderFooter(w)
 
+	ctx := r.Context()
 	values := r.URL.Query()
 	qStrs := values["q"]
 	inputStrs := values["input"]
-
 	explainMode := getExplain(r.URL.Query()["explain"])
-	ctx := r.Context()
 
 	renderQueryForm(w, qStrs, inputStrs, explainMode)
 
@@ -337,46 +365,43 @@ func (s *Server) registerHandler(router *mux.Router, version int, path string, m
 	router.HandleFunc(prefix+path, h).Methods(method)
 }
 
-func (s *Server) v1DataGet(w http.ResponseWriter, r *http.Request) {
+func (s *Server) v1DataGet(r request) (resp response) {
+	path := stringPathToDataRef(r.path)
 
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	path := stringPathToDataRef(vars["path"])
-	pretty := getBoolParam(r.URL, types.ParamPrettyV1, true)
-	explainMode := getExplain(r.URL.Query()["explain"])
-	includeMetrics := getBoolParam(r.URL, types.ParamMetricsV1, true)
 	m := metrics.New()
-
 	m.Timer(metrics.RegoQueryParse).Start()
 
-	input, nonGround, err := readInputParam(r.URL.Query()[types.ParamInputV1])
+	input, nonGround, err := readInputParam(r.values[types.ParamInputV1])
 	if err != nil {
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+		resp.code = CodeBadRequest
+		resp.msg = types.CodeInvalidParameter
+		resp.err = err
 		return
 	}
 
 	m.Timer(metrics.RegoQueryParse).Stop()
 
-	if nonGround && explainMode != types.ExplainOffV1 {
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, "not supported: explanations with non-ground input values"))
+	if nonGround && r.explainMode != types.ExplainOffV1 {
+		resp.code = CodeBadRequest
+		resp.data = types.NewErrorV1(types.CodeInvalidParameter, "not supported: explanations with non-ground input values").Bytes()
 		return
 	}
 
 	// Prepare for query.
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
 	compiler := s.Compiler()
-	params := topdown.NewQueryParams(ctx, compiler, s.store, txn, input, path)
+	params := topdown.NewQueryParams(r.ctx, compiler, s.store, txn, input, path)
 	params.Metrics = m
 
 	var buf *topdown.BufferTracer
-	if explainMode != types.ExplainOffV1 {
+	if r.explainMode != types.ExplainOffV1 {
 		buf = topdown.NewBufferTracer()
 		params.Tracer = buf
 	}
@@ -386,21 +411,23 @@ func (s *Server) v1DataGet(w http.ResponseWriter, r *http.Request) {
 
 	// Handle results.
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
 	result := types.DataResponseV1{}
 
-	if includeMetrics {
+	if r.includeMetrics {
 		result.Metrics = m.All()
 	}
 
 	if qrs.Undefined() {
-		if explainMode == types.ExplainFullV1 {
+		if r.explainMode == types.ExplainFullV1 {
 			result.Explanation = types.NewTraceV1(*buf)
 		}
-		writer.JSON(w, 200, result, pretty)
+		resp.code = CodeOK
+		resp.data = result
+		resp.pretty = r.pretty
 		return
 	}
 
@@ -411,133 +438,134 @@ func (s *Server) v1DataGet(w http.ResponseWriter, r *http.Request) {
 		result.Result = &qrs[0].Result
 	}
 
-	switch explainMode {
+	switch r.explainMode {
 	case types.ExplainFullV1:
 		result.Explanation = types.NewTraceV1(*buf)
 	case types.ExplainTruthV1:
 		answer, err := explain.Truth(compiler, *buf)
 		if err != nil {
-			writer.ErrorAuto(w, err)
+			resp.err = err
 			return
 		}
 		result.Explanation = types.NewTraceV1(answer)
 	}
 
-	writer.JSON(w, 200, result, pretty)
+	resp.code = CodeOK
+	resp.data = result
+	resp.pretty = r.pretty
+	return
 }
 
-func (s *Server) v1DataPatch(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-
+func (s *Server) v1DataPatch(r request) (resp response) {
 	ops := []types.PatchV1{}
 
-	if err := util.NewJSONDecoder(r.Body).Decode(&ops); err != nil {
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+	if err := util.NewJSONDecoder(r.input).Decode(&ops); err != nil {
+		resp.code = CodeBadRequest
+		resp.msg = types.CodeInvalidParameter
+		resp.err = err
 		return
 	}
 
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
-	patches, err := s.prepareV1PatchSlice(vars["path"], ops)
+	patches, err := s.prepareV1PatchSlice(r.path, ops)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
 	for _, patch := range patches {
-		if err := s.store.Write(ctx, txn, patch.op, patch.path, patch.value); err != nil {
-			writer.ErrorAuto(w, err)
+		if err := s.store.Write(r.ctx, txn, patch.op, patch.path, patch.value); err != nil {
+			resp.err = err
 			return
 		}
 	}
 
-	writer.Bytes(w, 204, nil)
+	resp.code = CodeNoContent
+	return
 }
 
-func (s *Server) v0DataPost(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	path := stringPathToDataRef(vars["path"])
-
-	input, err := readInputV0(r.Body)
+func (s *Server) v0DataPost(r request) (resp response) {
+	path := stringPathToDataRef(r.path)
+	input, err := readInputV0(r.input)
 	if err != nil {
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, errors.Wrapf(err, "unexpected parse error for input"))
+		resp.code = CodeBadRequest
+		resp.msg = types.CodeInvalidParameter
+		resp.err = errors.Wrapf(err, "unexpected parse error for input")
 		return
 	}
 
 	// Prepare for query.
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
 	compiler := s.Compiler()
-	params := topdown.NewQueryParams(ctx, compiler, s.store, txn, input, path)
+	params := topdown.NewQueryParams(r.ctx, compiler, s.store, txn, input, path)
 
 	// Execute query.
 	qrs, err := topdown.Query(params)
 
 	// Handle results.
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
 	if qrs.Undefined() {
-		writer.Error(w, 404, types.NewErrorV1(types.CodeUndefinedDocument, fmt.Sprintf("%v: %v", types.MsgUndefinedError, path)))
+		resp.code = CodeNotFound
+		resp.data = types.NewErrorV1(types.CodeUndefinedDocument, fmt.Sprintf("%v: %v", types.MsgUndefinedError, path)).Bytes()
 		return
 	}
 
-	writer.JSON(w, 200, qrs[0].Result, false)
+	resp.code = CodeOK
+	resp.data = qrs[0].Result
+	resp.pretty = false
+	return
 }
 
-func (s *Server) v1DataPost(w http.ResponseWriter, r *http.Request) {
+func (s *Server) v1DataPost(r request) (resp response) {
+	path := stringPathToDataRef(r.path)
 
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	path := stringPathToDataRef(vars["path"])
-	pretty := getBoolParam(r.URL, types.ParamPrettyV1, true)
-	explainMode := getExplain(r.URL.Query()["explain"])
-	includeMetrics := getBoolParam(r.URL, types.ParamMetricsV1, true)
 	m := metrics.New()
-
 	m.Timer(metrics.RegoQueryParse).Start()
 
-	input, err := readInputV1(r.Body)
+	input, err := readInputV1(r.input)
 	if err != nil {
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+		resp.code = CodeBadRequest
+		resp.msg = types.CodeInvalidParameter
+		resp.err = err
 		return
 	}
 
 	m.Timer(metrics.RegoQueryParse).Stop()
 
 	// Prepare for query.
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
 	compiler := s.Compiler()
-	params := topdown.NewQueryParams(ctx, compiler, s.store, txn, input, path)
+	params := topdown.NewQueryParams(r.ctx, compiler, s.store, txn, input, path)
 
 	params.Metrics = m
 
 	var buf *topdown.BufferTracer
-	if explainMode != types.ExplainOffV1 {
+	if r.explainMode != types.ExplainOffV1 {
 		buf = topdown.NewBufferTracer()
 		params.Tracer = buf
 	}
@@ -547,105 +575,108 @@ func (s *Server) v1DataPost(w http.ResponseWriter, r *http.Request) {
 
 	// Handle results.
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
 	result := types.DataResponseV1{}
 
-	if includeMetrics {
+	if r.includeMetrics {
 		result.Metrics = m.All()
 	}
 
 	if qrs.Undefined() {
-		if explainMode == types.ExplainFullV1 {
+		if r.explainMode == types.ExplainFullV1 {
 			result.Explanation = types.NewTraceV1(*buf)
 		}
-		writer.JSON(w, 200, result, pretty)
+		resp.code = CodeOK
+		resp.data = result
+		resp.pretty = r.pretty
 		return
 	}
 
 	result.Result = &qrs[0].Result
 
-	switch explainMode {
+	switch r.explainMode {
 	case types.ExplainFullV1:
 		result.Explanation = types.NewTraceV1(*buf)
 	case types.ExplainTruthV1:
 		answer, err := explain.Truth(compiler, *buf)
 		if err != nil {
-			writer.ErrorAuto(w, err)
+			resp.err = err
 			return
 		}
 		result.Explanation = types.NewTraceV1(answer)
 	}
 
-	writer.JSON(w, 200, result, pretty)
+	resp.code = CodeOK
+	resp.data = result
+	resp.pretty = r.pretty
+	return
 }
 
-func (s *Server) v1DataPut(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-
+func (s *Server) v1DataPut(r request) (resp response) {
 	var value interface{}
-	if err := util.NewJSONDecoder(r.Body).Decode(&value); err != nil {
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+	if err := util.NewJSONDecoder(r.input).Decode(&value); err != nil {
+		resp.code = CodeBadRequest
+		resp.msg = types.CodeInvalidParameter
+		resp.err = err
 		return
 	}
 
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
-	path, ok := storage.ParsePath("/" + strings.Trim(vars["path"], "/"))
+	path, ok := storage.ParsePath("/" + strings.Trim(r.path, "/"))
 	if !ok {
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, "bad path: %v", vars["path"]))
+		resp.code = CodeBadRequest
+		resp.err = fmt.Errorf("%s: bad path: %v", types.CodeInvalidParameter, r.path)
 		return
 	}
 
-	_, err = s.store.Read(ctx, txn, path)
+	_, err = s.store.Read(r.ctx, txn, path)
 
 	if err != nil {
 		if !storage.IsNotFound(err) {
-			writer.ErrorAuto(w, err)
+			resp.err = err
 			return
 		}
-		if err := s.makeDir(ctx, txn, path[:len(path)-1]); err != nil {
-			writer.ErrorAuto(w, err)
+		if err := s.makeDir(r.ctx, txn, path[:len(path)-1]); err != nil {
+			resp.err = err
 			return
 		}
-	} else if r.Header.Get("If-None-Match") == "*" {
-		writer.Bytes(w, 304, nil)
+	} else if r.noneMatch == "*" {
+		resp.code = CodeNotModified
 		return
 	}
 
-	if err := s.store.Write(ctx, txn, storage.AddOp, path, value); err != nil {
-		writer.ErrorAuto(w, err)
+	if err := s.store.Write(r.ctx, txn, storage.AddOp, path, value); err != nil {
+		resp.err = err
 		return
 	}
 
-	writer.Bytes(w, 204, nil)
+	resp.code = CodeNoContent
+	return
 }
 
-func (s *Server) v1PoliciesDelete(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	id := vars["path"]
-
-	txn, err := s.store.NewTransaction(ctx)
+func (s *Server) v1PoliciesDelete(r request) (resp response) {
+	id := r.path
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
 	_, _, err = s.store.GetPolicy(txn, id)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
@@ -655,42 +686,40 @@ func (s *Server) v1PoliciesDelete(w http.ResponseWriter, r *http.Request) {
 	c := ast.NewCompiler()
 
 	if c.Compile(mods); c.Failed() {
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidOperation, types.MsgCompileModuleError).WithASTErrors(c.Errors))
+		resp.code = CodeBadRequest
+		resp.data = types.NewErrorV1(types.CodeInvalidOperation, types.MsgCompileModuleError).WithASTErrors(c.Errors).Bytes()
 		return
 	}
 
 	if err := s.store.DeletePolicy(txn, id); err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
 	s.setCompiler(c)
 
-	writer.Bytes(w, 204, nil)
+	resp.code = CodeNoContent
+	return
 }
 
-func (s *Server) v1PoliciesGet(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	path := vars["path"]
-	source := getBoolParam(r.URL, types.ParamSourceV1, true)
-
-	txn, err := s.store.NewTransaction(ctx)
+func (s *Server) v1PoliciesGet(r request) (resp response) {
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
-	_, bs, err := s.store.GetPolicy(txn, path)
+	_, bs, err := s.store.GetPolicy(txn, r.path)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	if source {
-		writer.Bytes(w, 200, bs)
+	if r.getSource {
+		resp.code = CodeOK
+		resp.data = bs
 		return
 	}
 
@@ -698,20 +727,21 @@ func (s *Server) v1PoliciesGet(w http.ResponseWriter, r *http.Request) {
 
 	response := types.PolicyGetResponseV1{
 		Result: types.PolicyV1{
-			ID:     path,
-			Module: c.Modules[path],
+			ID:     r.path,
+			Module: c.Modules[r.path],
 		},
 	}
 
-	writer.JSON(w, 200, response, true)
+	resp.code = CodeOK
+	resp.data = response
+	resp.pretty = true
+	return
 }
 
-func (s *Server) v1PoliciesList(w http.ResponseWriter, r *http.Request) {
-
+func (s *Server) v1PoliciesList(r request) (resp response) {
 	policies := []types.PolicyV1{}
 
 	c := s.Compiler()
-
 	for id, mod := range c.Modules {
 		policy := types.PolicyV1{
 			ID:     id,
@@ -724,96 +754,95 @@ func (s *Server) v1PoliciesList(w http.ResponseWriter, r *http.Request) {
 		Result: policies,
 	}
 
-	writer.JSON(w, 200, response, true)
+	resp.code = CodeOK
+	resp.data = response
+	resp.pretty = true
+	return
 }
 
-func (s *Server) v1PoliciesPut(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	vars := mux.Vars(r)
-	path := vars["path"]
-
-	buf, err := ioutil.ReadAll(r.Body)
+func (s *Server) v1PoliciesPut(r request) (resp response) {
+	buf, err := ioutil.ReadAll(r.input)
 	if err != nil {
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+		resp.code = CodeBadRequest
+		resp.msg = types.CodeInvalidParameter
+		resp.err = err
 		return
 	}
 
-	parsedMod, err := ast.ParseModule(path, string(buf))
-
+	parsedMod, err := ast.ParseModule(r.path, string(buf))
 	if err != nil {
+		resp.code = CodeBadRequest
 		switch err := err.(type) {
 		case ast.Errors:
-			writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(err))
+			resp.data = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(err).Bytes()
 		default:
-			writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+			resp.msg = types.CodeInvalidParameter
+			resp.err = err
 		}
 		return
 	}
 
 	if parsedMod == nil {
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, "empty module"))
+		resp.code = CodeBadRequest
+		resp.data = types.NewErrorV1(types.CodeInvalidParameter, "empty module").Bytes()
 		return
 	}
 
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
 	mods := s.store.ListPolicies(txn)
-	mods[path] = parsedMod
+	mods[r.path] = parsedMod
 
 	c := ast.NewCompiler()
-
 	if c.Compile(mods); c.Failed() {
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(c.Errors))
+		resp.code = CodeBadRequest
+		resp.data = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(c.Errors).Bytes()
 		return
 	}
 
-	if err := s.store.InsertPolicy(txn, path, parsedMod, buf); err != nil {
-		writer.ErrorAuto(w, err)
+	if err := s.store.InsertPolicy(txn, r.path, parsedMod, buf); err != nil {
+		resp.err = err
 		return
 	}
 
 	s.setCompiler(c)
-
 	response := types.PolicyPutResponseV1{
 		Result: types.PolicyV1{
-			ID:     path,
-			Module: c.Modules[path],
+			ID:     r.path,
+			Module: c.Modules[r.path],
 		},
 	}
 
-	writer.JSON(w, 200, response, true)
+	resp.code = CodeOK
+	resp.data = response
+	resp.pretty = true
+	return
 }
 
-func (s *Server) v1QueryGet(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	values := r.URL.Query()
-	pretty := getBoolParam(r.URL, types.ParamPrettyV1, true)
-	explainMode := getExplain(r.URL.Query()["explain"])
-	includeMetrics := getBoolParam(r.URL, types.ParamMetricsV1, true)
+func (s *Server) v1QueryGet(r request) (resp response) {
 	m := metrics.New()
-
-	qStrs := values["q"]
+	qStrs := r.values["q"]
 	if len(qStrs) == 0 {
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, "missing parameter 'q'"))
+		resp.code = CodeBadRequest
+		resp.data = types.NewErrorV1(types.CodeInvalidParameter, "missing parameter 'q'").Bytes()
 		return
 	}
 
 	qStr := qStrs[len(qStrs)-1]
-
-	txn, err := s.store.NewTransaction(ctx)
+	txn, err := s.store.NewTransaction(r.ctx)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
-	defer s.store.Close(ctx, txn)
+	defer s.store.Close(r.ctx, txn)
 
 	compiler := s.Compiler()
 
@@ -821,8 +850,7 @@ func (s *Server) v1QueryGet(w http.ResponseWriter, r *http.Request) {
 
 	query, err := ast.ParseBody(qStr)
 	if err != nil {
-		handleCompileError(w, err)
-		return
+		return handleCompileError(err)
 	}
 
 	m.Timer(metrics.RegoQueryParse).Stop()
@@ -830,35 +858,40 @@ func (s *Server) v1QueryGet(w http.ResponseWriter, r *http.Request) {
 
 	compiled, err := compiler.QueryCompiler().Compile(query)
 	if err != nil {
-		handleCompileError(w, err)
-		return
+		return handleCompileError(err)
 	}
 
 	m.Timer(metrics.RegoQueryCompile).Stop()
 	m.Timer(metrics.RegoQueryEval).Start()
 
-	results, err := s.execQuery(ctx, compiler, txn, compiled, nil, explainMode)
+	results, err := s.execQuery(r.ctx, compiler, txn, compiled, nil, r.explainMode)
 	if err != nil {
-		writer.ErrorAuto(w, err)
+		resp.err = err
 		return
 	}
 
 	m.Timer(metrics.RegoQueryEval).Stop()
 
-	if includeMetrics {
+	if r.includeMetrics {
 		results.Metrics = m.All()
 	}
 
-	writer.JSON(w, 200, results, pretty)
+	resp.code = CodeOK
+	resp.data = results
+	resp.pretty = r.pretty
+	return
 }
 
-func handleCompileError(w http.ResponseWriter, err error) {
+func handleCompileError(err error) (resp response) {
+	resp.code = CodeBadRequest
 	switch err := err.(type) {
 	case ast.Errors:
-		writer.Error(w, http.StatusBadRequest, types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileQueryError).WithASTErrors(err))
+		resp.data = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileQueryError).WithASTErrors(err).Bytes()
 	default:
-		writer.ErrorString(w, http.StatusBadRequest, types.CodeInvalidParameter, err)
+		resp.msg = types.CodeInvalidParameter
+		resp.err = err
 	}
+	return
 }
 
 func (s *Server) setCompiler(compiler *ast.Compiler) {
