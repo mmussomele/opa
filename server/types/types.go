@@ -67,6 +67,11 @@ func (e *ErrorV1) Bytes() []byte {
 	return nil
 }
 
+// Error returns this error as a string.
+func (e *ErrorV1) Error() string {
+	return string(e.Bytes())
+}
+
 // Messages included in error responses.
 const (
 	MsgCompileModuleError         = "error(s) occurred while compiling module(s)"

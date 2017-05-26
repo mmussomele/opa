@@ -17,3 +17,7 @@ import:
 - package: github.com/ghodss/yaml
 - package: github.com/Sirupsen/logrus
   version: v0.11.4
+- package: google.golang.org/grpc
+- packge: github.com/golang/protobuf
+  subpackages:
+  - protoc-gen-go

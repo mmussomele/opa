@@ -81,7 +81,9 @@ func httpReqToServerReq(r *http.Request) request {
 func serverRespToHttpResp(w http.ResponseWriter, r response) {
 	r.code = toHttpCode[r.code]
 	if r.err != nil {
-		if r.msg == "" {
+		if terr, ok := r.err.(*types.ErrorV1); ok {
+			writer.Error(w, r.code, terr)
+		} if r.msg == "" {
 			writer.ErrorAuto(w, r.err)
 		} else {
 			writer.ErrorString(w, r.code, r.msg, r.err)
@@ -109,4 +111,5 @@ var toHttpCode = map[int]int{
 	CodeBadRequest:  http.StatusBadRequest,
 	CodeNoContent:   http.StatusNoContent,
 	CodeNotModified: http.StatusNotModified,
+	CodeServerError: http.StatusInternalServerError,
 }

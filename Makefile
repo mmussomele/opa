@@ -22,6 +22,7 @@ GO := go
 GOARCH := $(shell go env GOARCH)
 GOOS := $(shell go env GOOS)
 DISABLE_CGO := CGO_ENABLED=0
+PROTOC = protoc
 
 BIN := opa_$(GOOS)_$(GOARCH)
 
@@ -61,6 +62,7 @@ deps:
 
 generate:
 	$(GO) generate
+	$(PROTOC) -I server/proto/ server/proto/opa.proto --go_out=plugins=grpc:server/proto
 
 build: generate
 	$(DISABLE_CGO) $(GO) build -o $(BIN) -ldflags $(LDFLAGS)

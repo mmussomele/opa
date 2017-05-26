@@ -32,6 +32,7 @@ import (
 	"github.com/open-policy-agent/opa/util"
 	"github.com/open-policy-agent/opa/version"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc"
 )
 
 // AuthenticationScheme enumerates the supported authentication schemes. The
@@ -87,6 +88,7 @@ const (
 	CodeBadRequest
 	CodeNoContent
 	CodeNotModified
+	CodeServerError
 )
 
 // response represents the result of executing a request on the server.
@@ -383,7 +385,7 @@ func (s *Server) v1DataGet(r request) (resp response) {
 
 	if nonGround && r.explainMode != types.ExplainOffV1 {
 		resp.code = CodeBadRequest
-		resp.data = types.NewErrorV1(types.CodeInvalidParameter, "not supported: explanations with non-ground input values").Bytes()
+		resp.err = types.NewErrorV1(types.CodeInvalidParameter, "not supported: explanations with non-ground input values")
 		return
 	}
 
@@ -524,7 +526,7 @@ func (s *Server) v0DataPost(r request) (resp response) {
 
 	if qrs.Undefined() {
 		resp.code = CodeNotFound
-		resp.data = types.NewErrorV1(types.CodeUndefinedDocument, fmt.Sprintf("%v: %v", types.MsgUndefinedError, path)).Bytes()
+		resp.err = types.NewErrorV1(types.CodeUndefinedDocument, fmt.Sprintf("%v: %v", types.MsgUndefinedError, path))
 		return
 	}
 
@@ -687,7 +689,7 @@ func (s *Server) v1PoliciesDelete(r request) (resp response) {
 
 	if c.Compile(mods); c.Failed() {
 		resp.code = CodeBadRequest
-		resp.data = types.NewErrorV1(types.CodeInvalidOperation, types.MsgCompileModuleError).WithASTErrors(c.Errors).Bytes()
+		resp.err = types.NewErrorV1(types.CodeInvalidOperation, types.MsgCompileModuleError).WithASTErrors(c.Errors)
 		return
 	}
 
@@ -774,7 +776,7 @@ func (s *Server) v1PoliciesPut(r request) (resp response) {
 		resp.code = CodeBadRequest
 		switch err := err.(type) {
 		case ast.Errors:
-			resp.data = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(err).Bytes()
+			resp.err = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(err)
 		default:
 			resp.msg = types.CodeInvalidParameter
 			resp.err = err
@@ -784,7 +786,7 @@ func (s *Server) v1PoliciesPut(r request) (resp response) {
 
 	if parsedMod == nil {
 		resp.code = CodeBadRequest
-		resp.data = types.NewErrorV1(types.CodeInvalidParameter, "empty module").Bytes()
+		resp.err = types.NewErrorV1(types.CodeInvalidParameter, "empty module")
 		return
 	}
 
@@ -803,7 +805,7 @@ func (s *Server) v1PoliciesPut(r request) (resp response) {
 	c := ast.NewCompiler()
 	if c.Compile(mods); c.Failed() {
 		resp.code = CodeBadRequest
-		resp.data = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(c.Errors).Bytes()
+		resp.err = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileModuleError).WithASTErrors(c.Errors)
 		return
 	}
 
@@ -831,7 +833,7 @@ func (s *Server) v1QueryGet(r request) (resp response) {
 	qStrs := r.values["q"]
 	if len(qStrs) == 0 {
 		resp.code = CodeBadRequest
-		resp.data = types.NewErrorV1(types.CodeInvalidParameter, "missing parameter 'q'").Bytes()
+		resp.err = types.NewErrorV1(types.CodeInvalidParameter, "missing parameter 'q'")
 		return
 	}
 
@@ -886,7 +888,7 @@ func handleCompileError(err error) (resp response) {
 	resp.code = CodeBadRequest
 	switch err := err.(type) {
 	case ast.Errors:
-		resp.data = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileQueryError).WithASTErrors(err).Bytes()
+		resp.err = types.NewErrorV1(types.CodeInvalidParameter, types.MsgCompileQueryError).WithASTErrors(err)
 	default:
 		resp.msg = types.CodeInvalidParameter
 		resp.err = err

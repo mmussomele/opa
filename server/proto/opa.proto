@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package proto;
+
+service OPA {
+    rpc V0DataPost(V0DataPostRequest) returns (V0DataPostResponse);
+    rpc V1DataPut(V1DataPutRequest) returns (V1DataPutResponse);
+    rpc V1DataGet(V1DataGetRequest) returns (V1DataGetResponse);
+    rpc V1DataPatch(V1DataPatchRequest) returns (V1DataPatchResponse);
+    rpc V1DataPost(V1DataPostRequest) returns (V1DataPostResponse);
+    rpc V1QueryGet(V1QueryGetRequest) returns (V1QueryGetResponse);
+    rpc V1PoliciesPut(V1PoliciesPutRequest) returns (V1PoliciesPutResponse);
+    rpc V1PoliciesList(V1PoliciesListRequest) returns (V1PoliciesListResponse);
+    rpc V1PoliciesGet(V1PoliciesGetRequest) returns (V1PoliciesGetResponse);
+    rpc V1PoliciesDelete(V1PoliciesDeleteRequest) returns (V1PoliciesDeleteResponse);
+}
+
+message V0DataPostRequest {
+    string path = 1;
+    string input = 2;
+    bool pretty = 3;
+}
+
+message V0DataPostResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1DataPutRequest {
+    string path = 1;
+    string contents = 2;
+    string if_none_match = 3;
+}
+
+message V1DataPutResponse {
+    int32 code = 1;
+}
+
+message V1DataGetRequest {
+    string path = 1;
+    bool pretty = 2;
+    bool metrics = 3;
+    Explain explain = 4;
+    repeated string input = 5;
+}
+
+message V1DataGetResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1DataPatchRequest {
+    string path = 1;
+    repeated string patch = 2;
+}
+
+message V1DataPatchResponse {
+    int32 code = 1;
+}
+
+message V1DataPostRequest {
+    string path = 1;
+    string input = 2;
+    bool pretty = 3;
+    bool metrics = 4;
+    Explain explain = 5;
+}
+
+message V1DataPostResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1QueryGetRequest {
+    string query = 1;
+    bool pretty = 2;
+    bool metrics = 3;
+    Explain explain = 4;
+}
+
+message V1QueryGetResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1PoliciesPutRequest {
+    string path = 1;
+    string policy = 2;
+}
+
+message V1PoliciesPutResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1PoliciesListRequest {
+    string path = 1;
+}
+
+message V1PoliciesListResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1PoliciesGetRequest {
+    string path = 1;
+}
+
+message V1PoliciesGetResponse {
+    int32 code = 1;
+    string result = 2;
+}
+
+message V1PoliciesDeleteRequest {
+    string path = 1;
+}
+
+message V1PoliciesDeleteResponse {
+    int32 code = 1;
+}
+
+enum Explain {
+    NONE = 0;
+    FULL = 1;
+    TRUTH = 2;
+}
