@@ -490,8 +490,8 @@ func (s *Server) v1DataGet(w http.ResponseWriter, r *http.Request) {
 	settings := s.evalDiagnosticPolicy(r)
 
 	watch := getWatch(r.URL.Query()[types.ParamWatchV1])
-	if watch {
-		s.watchQuery(path.String(), w, r, true)
+	if watch != types.WatchOffV1 {
+		s.watchQuery(path.String(), w, r, watch, true)
 		return
 	}
 
@@ -622,8 +622,8 @@ func (s *Server) v1DataPost(w http.ResponseWriter, r *http.Request) {
 	settings := s.evalDiagnosticPolicy(r)
 
 	watch := getWatch(r.URL.Query()[types.ParamWatchV1])
-	if watch {
-		s.watchQuery(path.String(), w, r, true)
+	if watch != types.WatchOffV1 {
+		s.watchQuery(path.String(), w, r, watch, true)
 		return
 	}
 
@@ -939,8 +939,8 @@ func (s *Server) v1QueryGet(w http.ResponseWriter, r *http.Request) {
 	qStr := qStrs[len(qStrs)-1]
 
 	watch := getWatch(r.URL.Query()[types.ParamWatchV1])
-	if watch {
-		s.watchQuery(qStr, w, r, false)
+	if watch != types.WatchOffV1 {
+		s.watchQuery(qStr, w, r, watch, false)
 		return
 	}
 
@@ -962,7 +962,12 @@ func (s *Server) v1QueryGet(w http.ResponseWriter, r *http.Request) {
 	writer.JSON(w, 200, results, pretty)
 }
 
-func (s *Server) watchQuery(query string, w http.ResponseWriter, r *http.Request, data bool) {
+func (s *Server) watchQuery(query string, w http.ResponseWriter, r *http.Request, mode types.WatchModeV1, data bool) {
+	if !data && mode == types.WatchDeltaV1 {
+		writer.ErrorString(w, http.StatusBadRequest, "delta watches not supported", errors.New("cannot set delta watch on query"))
+		return
+	}
+
 	pretty := getBoolParam(r.URL, types.ParamPrettyV1, true)
 	explainMode := getExplain(r.URL.Query()["explain"], types.ExplainOffV1)
 	includeMetrics := getBoolParam(r.URL, types.ParamMetricsV1, true)
@@ -1001,6 +1006,10 @@ func (s *Server) watchQuery(query string, w http.ResponseWriter, r *http.Request
 		encoder.SetIndent("", "  ")
 	}
 
+	notSetErr := types.NewErrorV1(types.CodeEvaluation, "watch invalidated: cannot perform delta watches on non-sets")
+
+	var defined bool
+	var last []interface{}
 	abort := r.Context().Done()
 	for {
 		select {
@@ -1014,6 +1023,28 @@ func (s *Server) watchQuery(query string, w http.ResponseWriter, r *http.Request
 				r.Error = types.NewErrorV1(types.CodeEvaluation, e.Error.Error())
 			} else if data && len(e.Value) > 0 && len(e.Value[0].Expressions) > 0 {
 				r.Result = e.Value[0].Expressions[0].Value
+				if mode == types.WatchDeltaV1 {
+					switch e.Value[0].Expressions[0].AstValue.(type) {
+					case *ast.Set:
+						defined = true
+						result := r.Result.([]interface{})
+						if last != nil {
+							r.Result = diff(r.Result.([]interface{}), last)
+						}
+						last = result
+					case ast.Null:
+						if defined {
+							r.Error = notSetErr
+							encoder.Encode(r)
+							return
+						}
+						last = []interface{}{}
+					default:
+						r.Error = notSetErr
+						encoder.Encode(r)
+						return
+					}
+				}
 			}
 
 			if includeMetrics {
@@ -1198,6 +1229,71 @@ func (s *Server) getExplainResponse(explainMode types.ExplainModeV1, trace []*to
 		explanation = types.NewTraceV1(answer)
 	}
 	return explanation
+}
+
+type patch struct {
+	Op    string      `json:"op"`
+	Value interface{} `json:"value"`
+}
+
+func diff(new, old []interface{}) []patch {
+	o, err := ast.InterfaceToValue(old)
+	if err != nil {
+		panic("not reached")
+	}
+
+	n, err := ast.InterfaceToValue(new)
+	if err != nil {
+		panic("not reached")
+	}
+
+	return diffArrays(o.(ast.Array), n.(ast.Array))
+}
+
+func diffArrays(old, new ast.Array) []patch {
+	oldSet := &ast.Set{}
+	for _, t := range old {
+		oldSet.Add(t)
+	}
+
+	newSet := &ast.Set{}
+	for _, t := range new {
+		newSet.Add(t)
+	}
+
+	added := newSet.Diff(oldSet)
+	deleted := oldSet.Diff(newSet)
+	return generatePatches(added, deleted)
+}
+
+func generatePatches(added, deleted *ast.Set) (patches []patch) {
+	added.Iter(func(t *ast.Term) bool {
+		encoded, err := ast.JSON(t.Value)
+		if err != nil {
+			panic("not reached")
+		}
+
+		patches = append(patches, patch{
+			Op:    "add",
+			Value: encoded,
+		})
+		return false
+	})
+
+	deleted.Iter(func(t *ast.Term) bool {
+		encoded, err := ast.JSON(t.Value)
+		if err != nil {
+			panic("not reached")
+		}
+
+		patches = append(patches, patch{
+			Op:    "remove",
+			Value: encoded,
+		})
+		return false
+	})
+
+	return patches
 }
 
 func (s *Server) abort(ctx context.Context, txn storage.Transaction, finish func()) {
@@ -1392,8 +1488,16 @@ func getBoolParam(url *url.URL, name string, ifEmpty bool) bool {
 	return false
 }
 
-func getWatch(p []string) (watch bool) {
-	return len(p) > 0
+func getWatch(p []string) (watch types.WatchModeV1) {
+	for _, x := range p {
+		switch x {
+		case string(types.WatchFullV1):
+			return types.WatchFullV1
+		case string(types.WatchDeltaV1):
+			return types.WatchDeltaV1
+		}
+	}
+	return types.WatchOffV1
 }
 
 func getExplain(p []string, zero types.ExplainModeV1) types.ExplainModeV1 {

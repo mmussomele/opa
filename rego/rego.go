@@ -38,14 +38,16 @@ type Location struct {
 // ExpressionValue defines the value of an expression in a Rego query.
 type ExpressionValue struct {
 	Value    interface{} `json:"value"`
+	AstValue ast.Value   `json:"-"` // For internal use.
 	Text     string      `json:"text"`
 	Location *Location   `json:"location"`
 }
 
-func newExpressionValue(expr *ast.Expr, value interface{}) *ExpressionValue {
+func newExpressionValue(expr *ast.Expr, value interface{}, astValue ast.Value) *ExpressionValue {
 	return &ExpressionValue{
-		Value: value,
-		Text:  string(expr.Location.Text),
+		Value:    value,
+		AstValue: astValue,
+		Text:     string(expr.Location.Text),
 		Location: &Location{
 			Row: expr.Location.Row,
 			Col: expr.Location.Col,
@@ -355,7 +357,7 @@ func (r *Rego) eval(ctx context.Context, compiled ast.Body, txn storage.Transact
 			if !isTermVar(key) {
 				result.Bindings[string(key)] = val
 			} else if expr := findExprForTermVar(compiled, key); expr != nil {
-				result.Expressions = append(result.Expressions, newExpressionValue(expr, val))
+				result.Expressions = append(result.Expressions, newExpressionValue(expr, val, value))
 				exprs[expr] = struct{}{}
 			}
 		}
@@ -364,7 +366,7 @@ func (r *Rego) eval(ctx context.Context, compiled ast.Body, txn storage.Transact
 			// indicates it was not parsed and so the caller should not be
 			// shown it.
 			if _, ok := exprs[expr]; !ok && expr.Location != nil {
-				result.Expressions = append(result.Expressions, newExpressionValue(expr, true))
+				result.Expressions = append(result.Expressions, newExpressionValue(expr, true, ast.Boolean(true)))
 			}
 		}
 		rs = append(rs, result)

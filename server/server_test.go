@@ -355,12 +355,12 @@ func TestDataWatch(t *testing.T) {
 	r1 := newMockConn()
 	r2 := newMockConn()
 
-	get := newReqV1(http.MethodGet, `/data?watch`, "")
+	get := newReqV1(http.MethodGet, `/data?watch=full`, "")
 	go f.server.Handler.ServeHTTP(r1, get)
 	<-r1.hijacked
 	<-r1.write
 
-	get = newReqV1(http.MethodPost, `/data?watch`, "")
+	get = newReqV1(http.MethodPost, `/data?watch=full`, "")
 	go f.server.Handler.ServeHTTP(r2, get)
 	<-r2.hijacked
 	<-r2.write
@@ -386,6 +386,107 @@ func TestDataWatch(t *testing.T) {
 	}
 	if result := r2.buf.String(); result != exp {
 		t.Fatalf("Expected stream to equal %s, got %s", exp, result)
+	}
+}
+
+func TestDataWatchDiff(t *testing.T) {
+	f := newFixture(t)
+
+	// Test watching /data.
+	exp := strings.Join([]string{
+		"HTTP/1.1 200 OK\nContent-Type: application/json\nTransfer-Encoding: chunked\n\n10",
+		`{"result":null}
+`,
+		`e`,
+		`{"result":[]}
+`,
+		`11`,
+		`{"result":[1,2]}
+`,
+		`15`,
+		`{"result":[1,2,3,4]}
+`,
+		`11`,
+		`{"result":[2,3]}
+`,
+		`1a`,
+		`{"result":[2,3,"string"]}
+`,
+		`34`,
+		`{"result":[2,"string",["this","is",1,"composite"]]}
+`,
+		`10`,
+		`{"result":null}
+`,
+		``,
+	}, "\r\n")
+
+	expDiff := strings.Join([]string{
+		"HTTP/1.1 200 OK\nContent-Type: application/json\nTransfer-Encoding: chunked\n\n10",
+		`{"result":null}
+`,
+		`e`,
+		`{"result":[]}
+`,
+		`3b`,
+		`{"result":[{"op":"add","value":1},{"op":"add","value":2}]}
+`,
+		`3b`,
+		`{"result":[{"op":"add","value":3},{"op":"add","value":4}]}
+`,
+		`41`,
+		`{"result":[{"op":"remove","value":1},{"op":"remove","value":4}]}
+`,
+		`2b`,
+		`{"result":[{"op":"add","value":"string"}]}
+`,
+		`58`,
+		`{"result":[{"op":"add","value":["this","is",1,"composite"]},{"op":"remove","value":3}]}
+`,
+		`7c`,
+		`{"result":null,"error":{"code":"evaluation_error","message":"watch invalidated: cannot perform delta watches on non-sets"}}
+`,
+		`0`,
+		``,
+	}, "\r\n")
+	r1 := newMockConn()
+	r2 := newMockConn()
+
+	get := newReqV1(http.MethodGet, `/data/y/z?watch=full`, "")
+	go f.server.Handler.ServeHTTP(r1, get)
+	<-r1.hijacked
+	<-r1.write
+
+	get = newReqV1(http.MethodPost, `/data/y/z?watch=delta`, "")
+	go f.server.Handler.ServeHTTP(r2, get)
+	<-r2.hijacked
+	<-r2.write
+
+	tests := []tr{
+		{http.MethodPut, "/policies/test", "package y\nz = {a | a = data.x[_]}", 200, ""},
+		{http.MethodPut, "/data/x", `[1, 2]`, 204, ""},
+		{http.MethodPut, "/data/x", `[1, 2, 3, 4]`, 204, ""},
+		{http.MethodPut, "/data/x", `[2, 3]`, 204, ""},
+		{http.MethodPut, "/data/x", `[2, 3, "string"]`, 204, ""},
+		{http.MethodPut, "/data/x", `[2, "string", ["this", "is", 1, "composite"]]`, 204, ""},
+		{http.MethodPut, "/policies/test", "package y\nz = null", 200, ""},
+	}
+
+	for _, tr := range tests {
+		if err := f.v1(tr.method, tr.path, tr.body, tr.code, tr.resp); err != nil {
+			t.Fatal(err)
+		}
+		<-r1.write
+		<-r2.write
+	}
+	r1.Close()
+	r2.Close()
+
+	if result := r1.buf.String(); result != exp {
+		t.Fatalf("Expected stream to equal %s, got %s", exp, result)
+	}
+	if result := r2.buf.String(); result != expDiff {
+		t.Fatalf("Expected stream to equal %s, got %s", expDiff, result)
 	}
 }
 
@@ -617,7 +718,7 @@ func TestDataWatchDocsExample(t *testing.T) {
 	}
 
 	recorder := newMockConn()
-	get := newReqV1(http.MethodGet, `/data/servers?watch&pretty=true`, "")
+	get := newReqV1(http.MethodGet, `/data/servers?watch=full&pretty=true`, "")
 	go f.server.Handler.ServeHTTP(recorder, get)
 	<-recorder.hijacked
 	<-recorder.write
@@ -1110,7 +1211,7 @@ func TestQueryWatch(t *testing.T) {
 	}, "\r\n")
 	recorder := newMockConn()
 
-	get := newReqV1(http.MethodGet, `/query?q=a=data.x&watch`, "")
+	get := newReqV1(http.MethodGet, `/query?q=a=data.x&watch=full`, "")
 	go f.server.Handler.ServeHTTP(recorder, get)
 	<-recorder.hijacked
 	<-recorder.write
@@ -1184,12 +1285,12 @@ func TestQueryWatch(t *testing.T) {
 		}
 	}
 
-	get1 := newReqV1(http.MethodGet, `/query?q=a=data.z.r%2Bdata.x&watch`, "")
+	get1 := newReqV1(http.MethodGet, `/query?q=a=data.z.r%2Bdata.x&watch=full`, "")
 	go f.server.Handler.ServeHTTP(r1, get1)
 	<-r1.hijacked
 	<-r1.write
 
-	get2 := newReqV1(http.MethodGet, `/query?q=a=data.y&watch`, "")
+	get2 := newReqV1(http.MethodGet, `/query?q=a=data.y&watch=full`, "")
 	go f.server.Handler.ServeHTTP(r2, get2)
 	<-r2.hijacked
 	<-r2.write
@@ -1241,7 +1342,7 @@ func TestQueryWatch(t *testing.T) {
 	}, "\r\n")
 	recorder = newMockConn()
 
-	get = newReqV1(http.MethodGet, `/query?q=a=data.z.r%2Bdata.x&watch`, "")
+	get = newReqV1(http.MethodGet, `/query?q=a=data.z.r%2Bdata.x&watch=full`, "")
 	go f.server.Handler.ServeHTTP(recorder, get)
 	<-recorder.hijacked
 	<-recorder.write
@@ -1288,7 +1389,7 @@ func TestQueryWatch(t *testing.T) {
 	}
 
 	recorder = newMockConn()
-	get = newReqV1(http.MethodGet, `/query?q=a=data.z.r%2Bdata.x&watch`, "")
+	get = newReqV1(http.MethodGet, `/query?q=a=data.z.r%2Bdata.x&watch=full`, "")
 	go f.server.Handler.ServeHTTP(recorder, get)
 	<-recorder.hijacked
 	<-recorder.write
@@ -1530,12 +1631,12 @@ func TestWatchParams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	get := newReqV1(http.MethodGet, `/query?q=a=data.x&watch&metrics=true&explain=full`, "")
+	get := newReqV1(http.MethodGet, `/query?q=a=data.x&watch=full&metrics=true&explain=full`, "")
 	go f.server.Handler.ServeHTTP(r1, get)
 	<-r1.hijacked
 	<-r1.write
 
-	get = newReqV1(http.MethodGet, `/query?q=a=data.x&watch&pretty=true`, "")
+	get = newReqV1(http.MethodGet, `/query?q=a=data.x&watch=full&pretty=true`, "")
 	go f.server.Handler.ServeHTTP(r2, get)
 	<-r2.hijacked
 	<-r2.write

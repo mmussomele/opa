@@ -196,6 +196,16 @@ const (
 	ExplainTruthV1 ExplainModeV1 = "truth"
 )
 
+// WatchModeV1 defines supported values for the "watch" query parameter.
+type WatchModeV1 string
+
+// Watch mode enumeration.
+const (
+	WatchOffV1   WatchModeV1 = "off"
+	WatchFullV1  WatchModeV1 = "full"
+	WatchDeltaV1 WatchModeV1 = "delta"
+)
+
 // TraceV1 models the trace result returned for queries that include the
 // "explain" parameter. The trace is modelled as series of trace events that
 // identify the expression, local term bindings, query hierarchy, etc.
